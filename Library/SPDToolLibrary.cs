@@ -9,7 +9,7 @@ namespace SPDTool
     /// <summary>
     /// SPD Tool Communication Library
     /// Provides complete interface to RP2040-based SPD EEPROM Reader/Writer
-    /// Firmware Version: 20240616
+    /// Firmware Version: 20240616 (with 1MHz I2C support)
     /// </summary>
     public class SPDToolDevice : IDisposable
     {
@@ -95,6 +95,11 @@ namespace SPDTool
         public const int MAX_WRITE_LENGTH = 16;
         public const int MAX_DEVICE_NAME_LENGTH = 16;
         public const int MAX_EEPROM_READ = 32;  // From Arduino: responseBuffer[32]
+
+        // I2C Clock Modes
+        public const byte I2C_CLOCK_100KHZ = 0;
+        public const byte I2C_CLOCK_400KHZ = 1;
+        public const byte I2C_CLOCK_1MHZ = 2;   // Ultra Mode
 
         #endregion
 
@@ -461,7 +466,7 @@ namespace SPDTool
         /// <summary>
         /// Gets the current I2C clock mode
         /// </summary>
-        /// <returns>Clock mode (0 = 100kHz, 1 = 400kHz)</returns>
+        /// <returns>Clock mode (0 = 100kHz, 1 = 400kHz, 2 = 1MHz)</returns>
         public byte GetI2CClockMode()
         {
             SendCommand(CMD_BUS_CLOCK, CMD_GET);
@@ -470,18 +475,18 @@ namespace SPDTool
             if (response == null || response.Length == 0)
                 throw new InvalidOperationException("Failed to get I2C clock mode");
 
-            return response[0]; // Returns 0 or 1
+            return response[0]; // Returns 0, 1, or 2
         }
 
         /// <summary>
         /// Sets the I2C clock mode
         /// </summary>
-        /// <param name="mode">Clock mode (0 = 100kHz, 1 = 400kHz)</param>
+        /// <param name="mode">Clock mode (0 = 100kHz, 1 = 400kHz, 2 = 1MHz)</param>
         /// <returns>True if successful</returns>
         public bool SetI2CClockMode(byte mode)
         {
-            if (mode > 1)
-                throw new ArgumentException("Mode must be 0 (100kHz) or 1 (400kHz)", nameof(mode));
+            if (mode > I2C_CLOCK_1MHZ)
+                throw new ArgumentException($"Mode must be {I2C_CLOCK_100KHZ} (100kHz), {I2C_CLOCK_400KHZ} (400kHz), or {I2C_CLOCK_1MHZ} (1MHz)", nameof(mode));
 
             SendCommand(CMD_BUS_CLOCK, mode);
             var response = ReadResponse();

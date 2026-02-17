@@ -7,8 +7,7 @@ using SPDTool;
 namespace UnifiedDDRSPDFlasher
 {
     /// <summary>
-    /// Flasher Configuration Tab v2.2 - Fixed UI and sizing
-    /// All controls functional with proper button sizing
+    /// Flasher Configuration Tab v2.3 - Added 1MHz I2C support
     /// </summary>
     public class FlasherConfigTab : UserControl
     {
@@ -41,6 +40,7 @@ namespace UnifiedDDRSPDFlasher
         // I2C Settings
         private RadioButton _i2c100Radio;
         private RadioButton _i2c400Radio;
+        private RadioButton _i2c1MRadio;          // NEW: 1 MHz
         private Button _applyI2CButton;
 
         // Device Info
@@ -206,7 +206,7 @@ namespace UnifiedDDRSPDFlasher
                 Font = new Font("Segoe UI", 9.5F),
                 Height = 28
             };
-            _baudRateCombo.Items.AddRange(new object[] { "9600", "19200", "38400", "57600", "115200", "230400" });
+            _baudRateCombo.Items.AddRange(new object[] { "9600", "19200", "38400", "57600", "115200", "250000", "576000", "921600" });
             _baudRateCombo.SelectedIndex = 4; // 115200
             _baudRateCombo.SelectedIndexChanged += (s, e) => PortSettingsChanged?.Invoke(this, EventArgs.Empty);
             layout.Controls.Add(_baudRateCombo, 0, 3);
@@ -284,7 +284,7 @@ namespace UnifiedDDRSPDFlasher
             TableLayoutPanel layout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                RowCount = 4,
+                RowCount = 5,                     // Now 5 rows: label, 100k, 400k, 1M, button
                 Padding = new Padding(8)
             };
 
@@ -317,6 +317,16 @@ namespace UnifiedDDRSPDFlasher
             };
             layout.Controls.Add(_i2c400Radio, 0, 2);
 
+            // NEW: 1 MHz option
+            _i2c1MRadio = new RadioButton
+            {
+                Text = "1 MHz (Fast-Plus)",
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 9F),
+                Height = 24
+            };
+            layout.Controls.Add(_i2c1MRadio, 0, 3);
+
             _applyI2CButton = new Button
             {
                 Text = "Apply I2C Settings",
@@ -330,7 +340,7 @@ namespace UnifiedDDRSPDFlasher
             };
             _applyI2CButton.FlatAppearance.BorderSize = 0;
             _applyI2CButton.Click += OnApplyI2CClicked;
-            layout.Controls.Add(_applyI2CButton, 0, 3);
+            layout.Controls.Add(_applyI2CButton, 0, 4);
 
             group.Controls.Add(layout);
             return group;
@@ -618,12 +628,14 @@ namespace UnifiedDDRSPDFlasher
                 string deviceName = device.GetDeviceName();
                 _deviceNameText.Text = deviceName;
 
-                // Get I2C clock mode
+                // Get I2C clock mode (0,1,2)
                 byte clockMode = device.GetI2CClockMode();
                 if (clockMode == 0)
                     _i2c100Radio.Checked = true;
-                else
+                else if (clockMode == 1)
                     _i2c400Radio.Checked = true;
+                else // clockMode == 2
+                    _i2c1MRadio.Checked = true;
             }
             catch (Exception ex)
             {
@@ -681,11 +693,17 @@ namespace UnifiedDDRSPDFlasher
 
             try
             {
-                byte mode = _i2c100Radio.Checked ? (byte)0 : (byte)1;
+                byte mode;
+                if (_i2c100Radio.Checked)
+                    mode = 0;
+                else if (_i2c400Radio.Checked)
+                    mode = 1;
+                else // _i2c1MRadio.Checked
+                    mode = 2;
 
                 if (Device.SetI2CClockMode(mode))
                 {
-                    string speed = mode == 0 ? "100 kHz" : "400 kHz";
+                    string speed = mode == 0 ? "100 kHz" : (mode == 1 ? "400 kHz" : "1 MHz");
                     MessageBox.Show($"I2C clock speed set to {speed}", "Success",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
