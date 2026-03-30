@@ -569,7 +569,7 @@ namespace UnifiedDDRSPDFlasher
 
             _pmicModelLabel = new Label
             {
-                Text = "PMIC Model: Not implemented",
+                Text = "PMIC Model: ",
                 Dock = DockStyle.Fill,
                 Font = new Font("Segoe UI", 9F),
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -664,8 +664,9 @@ namespace UnifiedDDRSPDFlasher
             _outputStatusLabel.Text = "Output Status: Not implemented";
             _powerGoodLabel.Text = "Power Good: Not implemented";
             _detectedPMICAddresses.Clear();
+            _hexViewer.Clear();
             LogResponse("Device disconnected.");
-            UpdateUIState(false);
+            UpdateUIState(true);
         }
 
         public void UpdateDetectedDevices(List<byte> devices)
@@ -798,7 +799,6 @@ namespace UnifiedDDRSPDFlasher
                 if (_detectedPMICAddresses.Count > 0)
                 {
                     _currentPMICAddress = _detectedPMICAddresses[0];
-                    DetectPMICInfo();
                 }
             }
             catch (Exception ex)
@@ -829,8 +829,14 @@ namespace UnifiedDDRSPDFlasher
 
         private void DetectPMICInfo()
         {
+
+            _pmicModelLabel.Text = $"PMIC Model: {Device.GetPMICType(_currentPMICAddress)}";
+            _pmicModeLabel.Text = $"PMIC Mode: {Device.GetPMICMode(_currentPMICAddress)}";
+            _outputStatusLabel.Text = "Output Status: Not implemented";
+            _powerGoodLabel.Text = "Power Good: Not implemented";
+
             // Placeholder - PMIC info detection not yet implemented
-            LogResponse($"PMIC at 0x{_currentPMICAddress:X2} - Info detection pending implementation");
+            LogResponse($"PMIC at 0x{_currentPMICAddress:X2} - {Device.GetPMICType(_currentPMICAddress)}");
         }
 
         #endregion
@@ -900,9 +906,9 @@ namespace UnifiedDDRSPDFlasher
             {
                 // PMIC has 256 bytes (0x00-0xFF)
                 // Read in chunks of 16 bytes for reliability
-                for (ushort offset = 0; offset < 256; offset += 16)
+                for (ushort offset = 0; offset < 256; offset += 64)
                 {
-                    byte chunkSize = (byte)Math.Min(16, 256 - offset);
+                    byte chunkSize = (byte)Math.Min(64, 256 - offset);
 
                     try
                     {
@@ -970,7 +976,7 @@ namespace UnifiedDDRSPDFlasher
                 Cursor = Cursors.WaitCursor;
 
                 // Read single register using the new ReadI2CDevice method
-                byte[] data = Device.ReadI2CDevice(_currentPMICAddress, regAddress, 1);
+                byte[] data = Device.ReadPMICDevice(_currentPMICAddress, regAddress);
 
                 if (data != null && data.Length == 1)
                 {
@@ -1013,9 +1019,9 @@ namespace UnifiedDDRSPDFlasher
 
                 // Write single register using the new WriteI2CDevice method
                 bool wData = Device.WriteI2CDevice(_currentPMICAddress, regAddress, regValue);
-                byte[] data = Device.ReadI2CDevice(_currentPMICAddress, regAddress, 1);
-
-                if (wData != false && data.Length == 1)
+                byte[] data = Device.ReadPMICDevice(_currentPMICAddress, regAddress);
+                
+                if (wData != false && data.Length <= 1)
                 {
                     LogResponse($"✓ Register 0x{regAddress:X2} = 0x{data[0]:X2}");
                 }
@@ -1052,8 +1058,38 @@ namespace UnifiedDDRSPDFlasher
 
         private void OnToggleVregClicked(object sender, EventArgs e)
         {
-            LogResponse("[INFO] Toggling voltage regulators...");
-            LogResponse("⚠ Voltage regulator control not yet implemented");
+            var measurements = Device.ReadAllMeasurements(_currentPMICAddress);
+            if (measurements == null)
+            {
+                LogResponse("[ERROR] Failed to read measurements.");
+                return;
+            }
+
+            LogResponse($"[INFO] PMIC Type: {measurements.DeviceType}");
+
+            // Voltages (convert mV to V)
+            foreach (var kv in measurements.Voltages_mV)
+            {
+                LogResponse($"[INFO] {kv.Key} voltage: {kv.Value / 1000.0:F3} V");
+            }
+
+            // Currents (if any)
+            foreach (var kv in measurements.Currents_mA)
+            {
+                LogResponse($"[INFO] {kv.Key} current: {kv.Value:F2} mA");
+            }
+
+            // Powers (if any)
+            foreach (var kv in measurements.Powers_mW)
+            {
+                LogResponse($"[INFO] {kv.Key} power: {kv.Value:F2} mW");
+            }
+
+            // Total power (if valid)
+            if (!double.IsNaN(measurements.TotalPower_mW))
+            {
+                LogResponse($"[INFO] Total Power: {measurements.TotalPower_mW:F2} mW");
+            }
         }
 
         private void OnRebootDimmClicked(object sender, EventArgs e)
@@ -1064,8 +1100,12 @@ namespace UnifiedDDRSPDFlasher
 
         private void OnAdvancedClicked(object sender, EventArgs e)
         {
-            LogResponse("[INFO] Opening advanced PMIC operations...");
-            LogResponse("⚠ Advanced PMIC operations not yet implemented");
+            if (Device.EnableFullAccess(_currentPMICAddress))
+            {
+                LogResponse("[INFO] Full access enabled for PMIC.");
+            } else LogResponse("[INFO] Faled to enable full access for PMIC.");
+            //LogResponse("[INFO] Opening advanced PMIC operations...");
+            //LogResponse("⚠ Advanced PMIC operations not yet implemented");
         }
 
         private void OnOpenDumpClicked(object sender, EventArgs e)
