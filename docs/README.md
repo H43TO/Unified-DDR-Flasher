@@ -1,5 +1,55 @@
 # Unified DDR Flasher
 
+# README Addition — Ordering & Contact Information
+
+---
+
+## Ordering Information
+
+### Hardware Pricing
+
+| Item                                                                  | Price |
+| --------------------------------------------------------------------- | ----- |
+| Main board (DDR4 & DDR5 SO-DIMM support)                              | $150  |
+| Extension board (DDR4 & DDR5 UDIMM support, more boards coming soon) | $25   |
+
+Due to increasing component costs, pricing may change over time.
+
+### Availability
+
+Due to currently limited component availability, shipping can only begin from the end of May 2026, and possibly around mid-June depending on component availability.
+
+### Order Process
+
+Orders are handled through PayPal invoices.
+
+Once an order is confirmed, a PayPal invoice will be sent for the full amount of the ordered items. Shipping costs are calculated separately once the package is prepared and ready to ship.
+
+To place an order, please provide:
+
+* Full name
+* PayPal email address (must match the invoice email)
+* Items you would like to purchase
+* Country
+
+A full shipping address is only required later when the package is prepared for shipment.
+
+### Shipping
+
+* Shipping costs, import duties, taxes, and any other fees must be paid by the buyer.
+* Shipping is normally done from Hungary using DHL.
+* Other shipping arrangements may also be possible.
+* The package should fit inside an A4-sized letter package.
+
+### Contact
+
+For ordering inquiries or support:
+
+* Email: h43to.code@gmail.com
+* PayPal: [https://paypal.me/H43TO](https://paypal.me/H43TO)
+
+## About the program
+
 A GUI and CLI tool for reading, writing, and programming SPD EEPROMs
 (DDR4/DDR5) and PMIC registers on memory modules, using the
 RP2040-based UDF programmer hardware.
