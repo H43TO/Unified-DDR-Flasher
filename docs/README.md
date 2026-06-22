@@ -17,7 +17,7 @@ Due to increasing component costs, pricing may change over time.
 
 ### Availability
 
-Due to currently limited component availability, shipping can only begin from the end of May 2026, and possibly around mid-June depending on component availability.
+UPDATE!: Since all the devices that were made for/by July have sold out, don't have any in stock right now, I've already ordered the parts and by estimates I can ship them out by the middle of august, but possibly sooner!
 
 ### Order Process
 
