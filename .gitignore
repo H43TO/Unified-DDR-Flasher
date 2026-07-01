@@ -38,8 +38,9 @@ desktop.ini
 # lib/prebuilt/UDF-Core.dll IS committed (pre-built for end users to compile against).
 # Do not add those paths here.
 /docs/INTERNAL_DEV.md
-/firmware/README.md
-/DDR4-SPD-JEDEC.pdf
-/DDR5-SPD-JEDEC.pdf
-/PMIC5100-SODIMM_UDIMM-JEDEC.pdf
-/AI_AGENT_GUIDELINE_v4.md
+/private_docs
+/lib/*.cs
+/lib/prebuilt/obfuscated
+/lib/obfuscar.xml
+/lib/packages.config
+/tools

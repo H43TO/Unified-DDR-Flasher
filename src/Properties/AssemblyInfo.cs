@@ -1,4 +1,4 @@
-using System.Resources;
+﻿using System.Resources;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -15,7 +15,8 @@ using System.Runtime.InteropServices;
 [assembly: ComVisible(false)]
 [assembly: Guid("a023b307-21b6-4bbd-9dcb-32aeefe13b48")]
 
-// Version matches firmware FW_VER (see lib/UDF-Core.csproj §12.3).
-[assembly: AssemblyVersion("2026.3.9.1")]
-[assembly: AssemblyFileVersion("2026.3.9.1")]
+// App release version (semantic versioning). The device reports its own
+// firmware build date (FW_VER) independently.
+[assembly: AssemblyVersion("4.0.0.0")]
+[assembly: AssemblyFileVersion("4.0.0.0")]
 [assembly: NeutralResourcesLanguage("en-150")]

@@ -1,18 +1,7 @@
-// Refactored for v3.0 guideline:
-//   §1.1  All serial I/O moved off the UI thread - bus monitor and disconnect-check
-//         now run on background Tasks driven by Task.Delay/CancellationToken loops.
-//   §1.2  Connection lifetime managed by CancellationTokenSource; Dispose is synchronous.
-//   §1.6  OnBusMonitorTick replaced with BusMonitorLoopAsync running on a Task.
-//         Only Control.BeginInvoke is used to push results to the UI.
-//   §3.4  Library performs the explicit CMD_PING handshake internally; this form
-//         catches handshake failures from the constructor and surfaces them.
-//
-// Target: .NET Framework 4.8.1. PeriodicTimer is unavailable; the equivalent
-// pattern is `while (!ct.IsCancellationRequested) { ... await Task.Delay(...) }`.
-
-using UDFCore;
+﻿using UDFCore;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Drawing;
 using System.IO;
 using System.IO.Ports;
@@ -26,8 +15,8 @@ namespace UnifiedDDRFlasher
     {
         #region Constants
 
-        private const string APP_VERSION = "v3.9.0";
-        private const int BUS_MONITOR_INTERVAL_MS    = 500;
+        private const string APP_VERSION = "v4.0.0";
+        private const int BUS_MONITOR_INTERVAL_MS = 500;
         private const int DISCONNECT_CHECK_INTERVAL_MS = 2000;
         private const int BAUD_RATE = 115200;
 
@@ -40,6 +29,8 @@ namespace UnifiedDDRFlasher
 
         private SPDOperationsTab _spdTab;
         private PMICOperationsTab _pmicTab;
+        private SidebandDevicesTab _sidebandTab;
+        private bool _sidebandVisible;
         private FlasherConfigTab _configTab;
 
         private Panel _statusBar;
@@ -52,13 +43,10 @@ namespace UnifiedDDRFlasher
         private string _currentPort = "";
         private int _errorCount;
 
-        // §1.1/§1.6: cancellation source bound to the device lifetime.
-        // Cancelled on disconnect; new one created on each connect.
         private CancellationTokenSource _connectionCts;
         private Task _busMonitorTask;
         private Task _disconnectCheckTask;
 
-        // Auto-connect timer is the only Forms.Timer remaining (UI-only logic).
         private System.Windows.Forms.Timer _autoConnectTimer;
 
         #endregion
@@ -67,6 +55,9 @@ namespace UnifiedDDRFlasher
 
         public MainForm()
         {
+#if DEBUG
+            UDFCore.UDFDebug.Enabled = true;
+#endif
             AppSettings.Load();
             InitializeCustomComponents();
             SetupEventHandlers();
@@ -92,7 +83,17 @@ namespace UnifiedDDRFlasher
             this.MinimumSize = new Size(1200, 750);
             this.StartPosition = FormStartPosition.CenterScreen;
 
-            try { this.Icon = System.Drawing.SystemIcons.Application; } catch { /* headless */ }
+            try
+            {
+                using (var iconStream = System.Reflection.Assembly.GetExecutingAssembly()
+                           .GetManifestResourceStream("app.ico"))
+                {
+                    this.Icon = iconStream != null
+                        ? new System.Drawing.Icon(iconStream)
+                        : System.Drawing.SystemIcons.Application;
+                }
+            }
+            catch { }
 
             var mainLayout = new TableLayoutPanel
             {
@@ -112,19 +113,25 @@ namespace UnifiedDDRFlasher
 
             _spdTab = new SPDOperationsTab();
             _pmicTab = new PMICOperationsTab();
+            _sidebandTab = new SidebandDevicesTab();
             _configTab = new FlasherConfigTab();
 
             var spdPage = new TabPage("SPD Operations") { Padding = new Padding(3) };
             spdPage.Controls.Add(_spdTab);
             var pmicPage = new TabPage("PMIC Operations") { Padding = new Padding(3) };
             pmicPage.Controls.Add(_pmicTab);
+            var sidebandPage = new TabPage("RCD / CKD / TS") { Padding = new Padding(3) };
+            sidebandPage.Controls.Add(_sidebandTab);
             var configPage = new TabPage("Flasher Configuration") { Padding = new Padding(3) };
             configPage.Controls.Add(_configTab);
 
             _mainTabControl.TabPages.Add(spdPage);
             _mainTabControl.TabPages.Add(pmicPage);
+            _sidebandVisible = AppSettings.ShowSidebandTab;
+            if (_sidebandVisible)
+                _mainTabControl.TabPages.Add(sidebandPage);
             _mainTabControl.TabPages.Add(configPage);
-            _mainTabControl.SelectedIndex = 2;
+            _mainTabControl.SelectedTab = configPage;
 
             mainLayout.Controls.Add(_mainTabControl, 0, 0);
             mainLayout.Controls.Add(CreateBottomStatusBar(), 0, 1);
@@ -205,10 +212,12 @@ namespace UnifiedDDRFlasher
 
             _spdTab.SetDeviceProvider(() => _spdDevice);
             _pmicTab.SetDeviceProvider(() => _spdDevice);
+            _sidebandTab.SetDeviceProvider(() => _spdDevice);
             _configTab.SetDeviceProvider(() => _spdDevice);
 
             _spdTab.ErrorOccurred += OnErrorOccurred;
             _pmicTab.ErrorOccurred += OnErrorOccurred;
+            _sidebandTab.ErrorOccurred += OnErrorOccurred;
             _configTab.ErrorOccurred += OnErrorOccurred;
         }
 
@@ -247,17 +256,12 @@ namespace UnifiedDDRFlasher
 
         #region Connection Management
 
-        /// <summary>
-        /// §1.1: Connection itself is synchronous (the library constructor handles
-        /// its own handshake), but we wrap the call so a slow handshake doesn't
-        /// freeze the UI. Background tasks are started via StartBackgroundLoops.
-        /// </summary>
         private async void OnConnectRequested(object sender, EventArgs e)
         {
             string portName = _configTab.GetSelectedPort();
             if (string.IsNullOrEmpty(portName) || portName == "No ports available")
             {
-                LogError("Please select a valid COM port first.");
+                _configTab.LogError("Select a COM port before connecting.");
                 MessageBox.Show("Please select a valid COM port first.", "Connection Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
@@ -267,10 +271,44 @@ namespace UnifiedDDRFlasher
 
             try
             {
-                // Library constructor performs the §3.4 explicit handshake.
-                // Run it on a thread-pool thread so the UI stays responsive
-                // during the 2.5 s boot delay + handshake retries.
                 _spdDevice = await Task.Run(() => new UDFDevice(portName, BAUD_RATE)).ConfigureAwait(true);
+
+                // identity check runs before any state setup, so a rejected device has nothing to unwind
+                UDFDevice.DeviceIdentity ident;
+                try
+                {
+                    ident = await Task.Run(() => _spdDevice.Identify()).ConfigureAwait(true);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception identEx)
+                {
+                    ident = new UDFDevice.DeviceIdentity(false, 0x40,
+                        $"check raised {identEx.GetType().Name}");
+                }
+
+                if (ident.Recognized)
+                {
+                    LogMessage($"Device check: ✓ {ident.Detail}");
+                }
+                else
+                {
+                    LogError($"Device check: ✗ {ident.Detail} (code 0x{ident.Code:X2})");
+                }
+
+                if (ident.ShouldRefuseConnect)
+                {
+                    LogError($"Device check failed - refusing to continue (code 0x{ident.Code:X2}).");
+                    CleanupAfterFailedConnect();
+                    MessageBox.Show(
+                        "Device check failed:\n\n" + ident.Detail +
+                        $" (code 0x{ident.Code:X2})" +
+                        "\n\nThe connection has been closed.",
+                        "Device check", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
 
                 uint version = await Task.Run(() => _spdDevice.GetVersion()).ConfigureAwait(true);
                 string devName = await Task.Run(() => _spdDevice.GetDeviceName()).ConfigureAwait(true);
@@ -287,15 +325,14 @@ namespace UnifiedDDRFlasher
 
                 _spdTab.OnDeviceConnected(_spdDevice);
                 _pmicTab.OnDeviceConnected(_spdDevice);
+                if (_sidebandVisible) _sidebandTab.OnDeviceConnected(_spdDevice);
                 _configTab.OnDeviceConnected(_spdDevice);
 
                 StartBackgroundLoops();
                 UpdateConnectionState(true);
 
                 LogMessage($"Connected: {devName} (FW: 0x{version:X8}) on {portName}");
-                MessageBox.Show(
-                    $"Connected successfully!\n\nDevice: {(string.IsNullOrEmpty(devName) ? "(unnamed)" : devName)}\nFirmware: 0x{version:X8}",
-                    "Connected", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                _configTab.LogError($"Connected: {(string.IsNullOrEmpty(devName) ? "(unnamed)" : devName)} on {portName}");
             }
             catch (OperationCanceledException)
             {
@@ -328,11 +365,6 @@ namespace UnifiedDDRFlasher
             try { _spdDevice?.Dispose(); } catch { }
             _spdDevice = null;
         }
-
-        /// <summary>
-        /// §1.6: replaces the WinForms Timer-driven OnBusMonitorTick. Bus monitor
-        /// and disconnect check both run on background Tasks.
-        /// </summary>
         private void StartBackgroundLoops()
         {
             _connectionCts = new CancellationTokenSource();
@@ -364,10 +396,10 @@ namespace UnifiedDDRFlasher
                                 pmicDevices.Add(addr);
                         }
                         catch (OperationCanceledException) { throw; }
-                        catch (IOException) { throw; }                  // bubble out → disconnect handler below
+                        catch (IOException) { throw; }
                         catch (UnauthorizedAccessException) { throw; }
                         catch (InvalidOperationException) { throw; }
-                        catch { /* per-address probe failure is non-fatal */ }
+                        catch { }
                     }
 
                     var allDevices = new List<byte>(spdDevices);
@@ -377,6 +409,7 @@ namespace UnifiedDDRFlasher
                     {
                         _spdTab.UpdateDetectedDevices(allDevices);
                         _pmicTab.UpdateDetectedDevices(allDevices);
+                        if (_sidebandVisible) _sidebandTab.UpdateDetectedDevices(allDevices);
                     });
                 }
                 catch (OperationCanceledException)
@@ -387,12 +420,6 @@ namespace UnifiedDDRFlasher
                 {
                     break;
                 }
-                // §1.6 (regression fix): a yanked USB cable used to surface
-                // here as a continuous stream of "Bus scan error: ..." log
-                // entries every BUS_MONITOR_INTERVAL_MS, because IOException
-                // hit the catch-all below and the loop kept running. Now we
-                // treat IO/access/invalid-state as the canonical "device is
-                // gone" signal: trigger the disconnect handler and exit.
                 catch (Exception ex) when (
                     ex is IOException ||
                     ex is UnauthorizedAccessException ||
@@ -404,34 +431,16 @@ namespace UnifiedDDRFlasher
                 catch (TimeoutException ex)
                 {
                     PostToUi(() => LogError($"Bus scan timeout: {ex.Message}"));
-                    // Timeouts can be transient (slow scan, busy bus). Keep looping;
-                    // the disconnect-check loop is responsible for the kill switch.
                 }
                 catch (Exception ex)
                 {
                     PostToUi(() => LogError($"Bus scan error: {ex.Message}"));
-                    // Likewise: unknown errors stay non-fatal here.
                 }
             }
         }
 
         private async Task DisconnectCheckLoopAsync(CancellationToken ct)
         {
-            // We use TWO mechanisms to detect disconnect:
-            //
-            //   1. Fast path: SerialPort.GetPortNames() no longer lists the
-            //      port we're connected to. This catches USB-CDC removal
-            //      within ~500 ms whether or not any I/O is in flight, and
-            //      doesn't depend on a ping making it through.
-            //
-            //   2. Liveness check: PingAsync. The library catches IO/access
-            //      exceptions and returns false (see PingAsync in
-            //      UDF-Core.cs), so a yanked cable produces a clean
-            //      `ok == false` here. Catches firmware hangs that don't
-            //      remove the port.
-            //
-            // Either trigger calls TriggerDisconnect() exactly once per
-            // disconnect event; the loop then exits.
             while (!ct.IsCancellationRequested)
             {
                 try
@@ -442,7 +451,7 @@ namespace UnifiedDDRFlasher
                     var dev = _spdDevice;
                     if (dev == null) continue;
 
-                    // 1. Fast path: is our port still enumerated?
+                    // two disconnect signals: the port stops enumerating (fast), or a ping comes back false
                     string port = _currentPort;
                     if (!string.IsNullOrEmpty(port))
                     {
@@ -457,20 +466,15 @@ namespace UnifiedDDRFlasher
                         }
                         catch
                         {
-                            // GetPortNames itself almost never throws, but
-                            // if it does we just skip the fast path and
-                            // fall through to the ping check.
                             stillThere = true;
                         }
                         if (!stillThere)
                         {
-                            PostToUi(() => TriggerDisconnect($"port {port} no longer enumerated"));
+                            PostToUi(() => TriggerDisconnect($"port {port} unplugged", isError: false));
                             break;
                         }
                     }
 
-                    // 2. Liveness ping. PingAsync returns false (not throws)
-                    // for IO/access/disposed/timeout - see library notes.
                     bool ok = await dev.PingAsync(ct).ConfigureAwait(false);
                     if (!ok)
                     {
@@ -496,43 +500,34 @@ namespace UnifiedDDRFlasher
                 }
                 catch (Exception ex)
                 {
-                    // Genuinely unexpected error. Log and stop the loop -
-                    // we don't want to spam errors, and the fast-path or
-                    // user-initiated disconnect will clean up properly.
                     PostToUi(() => LogError($"Disconnect check failed: {ex.Message}"));
                     break;
                 }
             }
         }
 
-        /// <summary>
-        /// Single entry point for "device went away unexpectedly". Idempotent:
-        /// if _isConnected is already false, this is a no-op. Always invoked
-        /// via PostToUi() so it runs on the UI thread.
-        /// </summary>
-        private void TriggerDisconnect(string reason)
+        private void TriggerDisconnect(string reason, bool isError = true)
         {
-            if (!_isConnected) return;          // already handled
-            LogError($"Disconnected ({reason})");
+            if (!_isConnected) return;
+            if (isError)
+            {
+                LogError($"Disconnected ({reason})");
+            }
+            else
+            {
+                LogMessage($"Disconnected ({reason})");
+                _configTab.LogError($"Disconnected ({reason})");
+            }
             OnDisconnectRequested(this, EventArgs.Empty);
         }
 
         private void OnDisconnectRequested(object sender, EventArgs e)
         {
-            // Idempotency guard - if a previous TriggerDisconnect already
-            // started teardown, don't run it again. Without this, the bus
-            // monitor and the disconnect check could each call us in quick
-            // succession on a USB-yank, which would re-Wait() on already-
-            // disposed tasks.
             if (!_isConnected && _spdDevice == null) return;
 
-            // Clear the flag IMMEDIATELY so any UI handler that fires
-            // between here and the device.Dispose() below bails out
-            // instead of trying to use _spdDevice.
             _isConnected = false;
             try
             {
-                // §1.2: cancel background tasks first, then dispose the device.
                 if (_connectionCts != null)
                 {
                     try { _connectionCts.Cancel(); } catch { }
@@ -545,7 +540,6 @@ namespace UnifiedDDRFlasher
                     _spdDevice = null;
                 }
 
-                // Wait briefly for background tasks to unwind so we don't leak.
                 try
                 {
                     if (_busMonitorTask != null)
@@ -553,7 +547,7 @@ namespace UnifiedDDRFlasher
                     if (_disconnectCheckTask != null)
                         _disconnectCheckTask.Wait(500);
                 }
-                catch { /* AggregateException(OperationCanceledException) is expected */ }
+                catch { }
 
                 try { _connectionCts?.Dispose(); } catch { }
                 _connectionCts = null;
@@ -564,6 +558,7 @@ namespace UnifiedDDRFlasher
 
                 _spdTab.OnDeviceDisconnected();
                 _pmicTab.OnDeviceDisconnected();
+                if (_sidebandVisible) _sidebandTab.OnDeviceDisconnected();
                 _configTab.OnDeviceDisconnected();
 
                 UpdateConnectionState(false);
@@ -581,13 +576,8 @@ namespace UnifiedDDRFlasher
             PostToUi(() =>
             {
                 LogMessage($"[ALERT] {e.AlertType}");
-                // Slave-count change alerts force an immediate scan; the
-                // library has already invalidated its module cache (§7.2).
                 if (e.AlertCode == 0x2B || e.AlertCode == 0x2D)
                 {
-                    // No direct call; the bus-monitor task will pick it up
-                    // on the next iteration. To make it snappier, we could
-                    // signal via a separate AutoResetEvent - left as future work.
                 }
             });
         }
@@ -599,6 +589,7 @@ namespace UnifiedDDRFlasher
             _isConnected = connected;
             _spdTab.Enabled = connected;
             _pmicTab.Enabled = connected;
+            _sidebandTab.Enabled = connected;
 
             _connectionIndicator.BackColor = connected ? Color.LimeGreen : Color.Red;
             _comPortLabel.Text = connected ? $"Port: {_currentPort}" : "Port: -";
@@ -634,7 +625,7 @@ namespace UnifiedDDRFlasher
                 else action();
             }
             catch (ObjectDisposedException) { }
-            catch (InvalidOperationException) { /* form closing */ }
+            catch (InvalidOperationException) { }
         }
 
         #endregion
@@ -664,8 +655,7 @@ namespace UnifiedDDRFlasher
 
         private void LogMessage(string message)
         {
-            string ts = DateTime.Now.ToString("HH:mm:ss.fff");
-            System.Diagnostics.Debug.WriteLine($"[MainForm] {ts}: {message}");
+            UDFCore.UDFDebug.Log("MainForm: " + message);
         }
 
         #endregion
@@ -691,6 +681,19 @@ namespace UnifiedDDRFlasher
             }
 
             base.OnFormClosing(e);
+        }
+
+        private const int WM_DEVICECHANGE = 0x0219;
+        private const int DBT_DEVNODES_CHANGED = 0x0007;
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_DEVICECHANGE && m.WParam.ToInt32() == DBT_DEVNODES_CHANGED)
+            {
+                try { _configTab?.OnDeviceChangeMessage(); }
+                catch { }
+            }
+            base.WndProc(ref m);
         }
 
         #endregion

@@ -1,0 +1,50 @@
+Unified DDR Flasher
+Copyright 2026 H43TO
+
+This product includes software developed by H43TO.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may
+not use this work except in compliance with the License. You may obtain
+a copy of the License in the LICENSE file in this repository, or at
+http://www.apache.org/licenses/LICENSE-2.0.
+
+──────────────────────────────────────────────────────────────────────────
+Scope clarification
+──────────────────────────────────────────────────────────────────────────
+
+The Apache License 2.0 covers the source code published in this
+repository (the Windows application shell, build configuration, the
+README and other documentation).
+
+The following components are NOT covered by the Apache License and are
+distributed under separate, proprietary terms. They are provided for
+use with hardware purchased from the project author and may not be
+redistributed without permission:
+
+    • firmware/UDF_fw.uf2          Compiled RP2040 firmware image
+    • lib/prebuilt/UDF-Core.dll    Compiled communication library
+
+The hardware design (schematics, PCB layout, BOM, fabrication files)
+is also proprietary and is not published.
+
+If your intended use of any of the proprietary components is not
+covered by the terms above, contact the project author:
+
+    h43to.code@gmail.com
+
+──────────────────────────────────────────────────────────────────────────
+Acknowledgements
+──────────────────────────────────────────────────────────────────────────
+
+This project was informed by prior open-source work in the same space.
+While little to no code from these projects was used, they shaped how the author
+approached the problem:
+
+    • SPD-Reader-Writer       https://github.com/1a2m3/SPD-Reader-Writer
+    • DDR4XMPEditor           https://github.com/integralfx/DDR4XMPEditor
+    • DDR5SPDEditor           https://github.com/edlf/DDR5SPDEditor
+
+Technical specifications used during development were obtained
+exclusively from public JEDEC standards (JESD21-C, JESD400-5D,
+JESD301-2, JESD300-5B.01) and from official datasheets distributed by
+their respective manufacturers.

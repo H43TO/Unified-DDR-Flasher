@@ -1,21 +1,14 @@
-// UPDATED v3.1:
-//  - I2C bus speed selection moved from main tab into AdvancedConfigDialog (ComboBox).
-//  - Auto-Connect is now a checkbox in AdvancedConfigDialog backed by AppSettings (JSON).
-//  - Live COM-port refresh retained; I2C radio buttons and "Apply I2C Settings" removed from main UI.
-using System;
+﻿using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO.Ports;
 using System.Threading;
 using System.Windows.Forms;
+using Microsoft.Win32;
 using UDFCore;
 
 namespace UnifiedDDRFlasher
 {
-    /// <summary>
-    /// Flasher Configuration Tab – version 3.1
-    /// Main tab: Connection group (port, connect, disconnect, FW info, device name) + Error log.
-    /// Advanced dialog: Set Device Name, Factory Reset, Auto-Connect checkbox, I2C speed, Manual Pin Control.
-    /// </summary>
     public class FlasherConfigTab : UserControl
     {
         #region Constants
@@ -40,21 +33,19 @@ namespace UnifiedDDRFlasher
         private UDFDevice Device => _deviceProvider?.Invoke();
         private bool _isConnected = false;
 
-        // Connection controls
         private ComboBox _portCombo;
         private Button _connectButton;
         private Button _disconnectButton;
         private Button _advancedButton;
         private Label _firmwareLabel;
         private Label _deviceNameLabel;
+        private Label _statusValueLabel;
+        private Label _portValueLabel;
 
-        // Error log
         private RichTextBox _errorLogText;
 
-        // Timers
         private System.Windows.Forms.Timer _portRefreshTimer;
 
-        // State
         private string[] _lastKnownPorts = Array.Empty<string>();
 
         private ToolTip _toolTip;
@@ -68,7 +59,6 @@ namespace UnifiedDDRFlasher
             _toolTip = new ToolTip { AutoPopDelay = 6000, InitialDelay = 400 };
             InitializeComponent();
 
-            // Live COM-port refresh
             _portRefreshTimer = new System.Windows.Forms.Timer { Interval = PORT_REFRESH_INTERVAL_MS };
             _portRefreshTimer.Tick += OnPortRefreshTick;
             _portRefreshTimer.Start();
@@ -85,7 +75,6 @@ namespace UnifiedDDRFlasher
             this.Dock = DockStyle.Fill;
             this.BackColor = Color.FromArgb(240, 240, 240);
 
-            // Main layout: 2 columns – left (error log + connection), right (info / hints)
             TableLayoutPanel mainLayout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -96,7 +85,6 @@ namespace UnifiedDDRFlasher
             mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42F));
             mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58F));
 
-            // Left column
             TableLayoutPanel leftCol = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -108,7 +96,6 @@ namespace UnifiedDDRFlasher
             leftCol.Controls.Add(CreateConnectionGroup(), 0, 1);
             mainLayout.Controls.Add(leftCol, 0, 0);
 
-            // Right column: hints / info panel
             mainLayout.Controls.Add(CreateInfoPanel(), 1, 0);
 
             this.Controls.Add(mainLayout);
@@ -118,7 +105,7 @@ namespace UnifiedDDRFlasher
         {
             GroupBox group = new GroupBox
             {
-                Text = "Error Log",
+                Text = "Event Log",
                 Dock = DockStyle.Fill,
                 Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
                 Padding = new Padding(8),
@@ -143,7 +130,7 @@ namespace UnifiedDDRFlasher
             {
                 Text = "Connection",
                 Dock = DockStyle.Fill,
-                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
                 Padding = new Padding(12),
                 ForeColor = Color.FromArgb(0, 78, 152)
             };
@@ -151,22 +138,24 @@ namespace UnifiedDDRFlasher
             TableLayoutPanel layout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                RowCount = 7,
+                RowCount = 9,
                 Padding = new Padding(6)
             };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22F)); // label
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F)); // combo
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F)); // connect + advanced
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F)); // disconnect
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 10F)); // spacer
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22F)); // fw label
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F)); // device name
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 12F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
             var portLabel = new Label
             {
-                Text = "COM Port:  (auto-refreshed)",
+                Text = "COM Port  (auto-refreshed)",
                 Dock = DockStyle.Fill,
-                Font = new Font("Segoe UI", 8.5F),
+                Font = new Font("Segoe UI", 9F),
                 TextAlign = ContentAlignment.BottomLeft,
                 ForeColor = Color.Gray
             };
@@ -176,13 +165,11 @@ namespace UnifiedDDRFlasher
             {
                 Dock = DockStyle.Fill,
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Font = new Font("Segoe UI", 9.5F),
-                Height = 28
+                Font = new Font("Segoe UI", 10.5F)
             };
             _portCombo.SelectedIndexChanged += (s, e) => PortSettingsChanged?.Invoke(this, EventArgs.Empty);
             layout.Controls.Add(_portCombo, 0, 1);
 
-            // Connect / Advanced row
             TableLayoutPanel buttonRow = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -196,12 +183,11 @@ namespace UnifiedDDRFlasher
             {
                 Text = "Connect",
                 Dock = DockStyle.Fill,
-                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
                 BackColor = Color.FromArgb(0, 120, 215),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                Height = 30,
-                Margin = new Padding(0, 0, 3, 0)
+                Margin = new Padding(0, 0, 4, 0)
             };
             _connectButton.FlatAppearance.BorderSize = 0;
             _connectButton.Click += (s, e) => ConnectionRequested?.Invoke(this, EventArgs.Empty);
@@ -209,11 +195,10 @@ namespace UnifiedDDRFlasher
 
             _advancedButton = new Button
             {
-                Text = "Advanced…",
+                Text = "Advanced\u2026",
                 Dock = DockStyle.Fill,
-                Font = new Font("Segoe UI", 9F),
+                Font = new Font("Segoe UI", 9.5F),
                 FlatStyle = FlatStyle.Flat,
-                Height = 30,
                 Margin = new Padding(0)
             };
             _advancedButton.FlatAppearance.BorderColor = Color.Silver;
@@ -228,165 +213,149 @@ namespace UnifiedDDRFlasher
             {
                 Text = "Disconnect",
                 Dock = DockStyle.Fill,
-                Font = new Font("Segoe UI", 9F),
+                Font = new Font("Segoe UI", 9.5F),
                 BackColor = Color.FromArgb(200, 200, 200),
                 ForeColor = Color.Black,
                 FlatStyle = FlatStyle.Flat,
-                Height = 30,
                 Enabled = false,
-                Margin = new Padding(0, 3, 0, 0)
+                Margin = new Padding(0, 4, 0, 0)
             };
             _disconnectButton.FlatAppearance.BorderSize = 0;
             _disconnectButton.Click += (s, e) => DisconnectionRequested?.Invoke(this, EventArgs.Empty);
             layout.Controls.Add(_disconnectButton, 0, 3);
 
-            // Spacer
             layout.Controls.Add(new Panel(), 0, 4);
 
-            _firmwareLabel = new Label
+            _statusValueLabel = new Label
             {
-                Text = "Firmware: —",
+                Text = "\u25CF  Disconnected",
                 Dock = DockStyle.Fill,
-                Font = new Font("Consolas", 8.5F),
+                Font = new Font("Segoe UI", 11F, FontStyle.Bold),
                 TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = Color.DimGray
+                ForeColor = Color.FromArgb(170, 40, 40)
             };
-            layout.Controls.Add(_firmwareLabel, 0, 5);
+            layout.Controls.Add(_statusValueLabel, 0, 5);
 
-            _deviceNameLabel = new Label
-            {
-                Text = "Device name: —",
-                Dock = DockStyle.Fill,
-                Font = new Font("Consolas", 8.5F),
-                TextAlign = ContentAlignment.TopLeft,
-                ForeColor = Color.DimGray
-            };
-            layout.Controls.Add(_deviceNameLabel, 0, 6);
+            _portValueLabel = MakeInfoLabel("Port:      -");
+            layout.Controls.Add(_portValueLabel, 0, 6);
+
+            _firmwareLabel = MakeInfoLabel("Firmware:  -");
+            layout.Controls.Add(_firmwareLabel, 0, 7);
+
+            _deviceNameLabel = MakeInfoLabel("Device:    -");
+            _deviceNameLabel.TextAlign = ContentAlignment.TopLeft;
+            layout.Controls.Add(_deviceNameLabel, 0, 8);
 
             group.Controls.Add(layout);
             return group;
         }
 
-        /// <summary>Right-hand guide panel.</summary>
+        private static Label MakeInfoLabel(string text) => new Label
+        {
+            Text = text,
+            Dock = DockStyle.Fill,
+            Font = new Font("Consolas", 10F),
+            TextAlign = ContentAlignment.MiddleLeft,
+            ForeColor = Color.FromArgb(70, 70, 70)
+        };
+
         private GroupBox CreateInfoPanel()
         {
             var group = new GroupBox
             {
                 Text = "Getting Started Guide",
                 Dock = DockStyle.Fill,
-                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
                 Padding = new Padding(10),
                 ForeColor = Color.FromArgb(0, 78, 152)
             };
 
-            // Use a RichTextBox so we can apply bold + normal formatting easily
             var rtb = new RichTextBox
             {
                 Dock = DockStyle.Fill,
                 ReadOnly = true,
                 BackColor = Color.FromArgb(240, 240, 240),
                 BorderStyle = BorderStyle.None,
-                Font = new Font("Segoe UI", 9F),
+                Font = new Font("Segoe UI", 9.75F),
                 ForeColor = Color.FromArgb(40, 40, 40),
                 ScrollBars = RichTextBoxScrollBars.Vertical
             };
 
-            // Helper to append a bold heading line
+            bool firstHeading = true;
             void H(string text)
             {
-                rtb.SelectionFont = new Font("Segoe UI", 9.5F, FontStyle.Bold);
+                if (!firstHeading) rtb.AppendText("\n");
+                firstHeading = false;
+                rtb.SelectionBullet = false;
+                rtb.SelectionIndent = 0;
+                rtb.SelectionFont = new Font("Segoe UI", 11.5F, FontStyle.Bold);
                 rtb.SelectionColor = Color.FromArgb(0, 78, 152);
                 rtb.AppendText(text + "\n");
             }
-            // Helper to append a normal body line
             void B(string text)
             {
-                rtb.SelectionFont = new Font("Segoe UI", 9F, FontStyle.Regular);
+                rtb.SelectionBullet = false;
+                rtb.SelectionIndent = 0;
+                rtb.SelectionFont = new Font("Segoe UI", 9.75F, FontStyle.Regular);
                 rtb.SelectionColor = Color.FromArgb(40, 40, 40);
                 rtb.AppendText(text + "\n");
             }
-            void Sep() { B(""); }
+            void Li(string text)
+            {
+                rtb.SelectionIndent = 12;
+                rtb.SelectionBullet = true;
+                rtb.SelectionFont = new Font("Segoe UI", 9.75F, FontStyle.Regular);
+                rtb.SelectionColor = Color.FromArgb(40, 40, 40);
+                rtb.AppendText(text + "\n");
+                rtb.SelectionBullet = false;
+                rtb.SelectionIndent = 0;
+            }
+            void Cmd(string text)
+            {
+                rtb.SelectionBullet = false;
+                rtb.SelectionIndent = 16;
+                rtb.SelectionFont = new Font("Consolas", 9.5F);
+                rtb.SelectionColor = Color.FromArgb(60, 60, 60);
+                rtb.AppendText(text + "\n");
+                rtb.SelectionIndent = 0;
+            }
 
-            H("① Plug In & Pick the Port");
-            B("Connect the RP2040 programmer over USB. Windows installs");
-            B("the CDC driver automatically; the COM port appears in the");
-            B("dropdown on the left within a second or two.");
-            B("Pick it from the list, then click Connect. On success the");
-            B("status bar at the bottom of the window turns green and");
-            B("shows the firmware version next to the device name.");
-            Sep();
+            H("\u2460  Plug in and pick the port");
+            B("Plug the programmer into a USB port. Windows sorts the driver out on its own, and the board shows up as a COM port in the dropdown on the left within a second or two.");
+            B("Pick it and hit Connect. The status line under the buttons turns green, and the firmware version and device name fill in right below it.");
 
-            H("② Read an SPD");
-            B("Switch to the SPD Operations tab. Detected modules are");
-            B("listed in the address dropdown (typically 0x50–0x57).");
-            B("Pick one and click Read SPD - the hex viewer fills in,");
-            B("and the Module Info box on the right immediately shows:");
-            B("  • Detected generation (DDR4 / DDR5) and SPD size");
-            B("  • Speed grade (e.g. DDR5-6400)");
-            B("  • Total module capacity");
-            B("  • Bus / IO width");
-            B("  • CRC status (green OK, red FAIL)");
-            B("That's the at-a-glance summary. For the full JEDEC field");
-            B("breakdown - all timings in nCK + ps, CAS latencies,");
-            B("manufacturer/PN, etc. - click \"Parsed Fields...\". A");
-            B("popup window opens with the complete decode and a");
-            B("\"Recalc & Fix CRC\" button.");
-            Sep();
+            H("\u2461  Read a module");
+            B("Head to the SPD Operations tab. Every module the programmer found is in the address dropdown, usually 0x50 to 0x57. Pick one, click Read SPD, and the hex viewer fills with the raw bytes.");
+            B("The Module Info box gives you the quick take: generation, SPD size, speed grade, capacity, width, and whether the CRC checks out.");
+            B("Want the whole story? Click \"Parsed Fields...\" for every timing in nCK and ps, the CAS list, the manufacturer block, and a Recalc & Fix CRC button.");
 
-            H("③ Save, Edit, Write");
-            B("• Save Dump   - writes the loaded bytes to a .bin file.");
-            B("• Open Dump   - loads a .bin from disk (works offline);");
-            B("                Module Info refills from the loaded data.");
-            B("• Verify      - reads from the DIMM and diffs against the");
-            B("                in-memory dump.");
-            B("• Write All   - pushes the dump to the DIMM. RSWP is");
-            B("                cleared automatically on DDR5, HV is");
-            B("                applied automatically on DDR4.");
-            B("If you've edited timings by hand, the CRC will go red.");
-            B("Open Parsed Fields, click Recalc & Fix CRC, then Write");
-            B("All - the patch is in-memory until you write.");
-            Sep();
+            H("\u2462  Save, edit, write");
+            Li("Save Dump writes the loaded bytes to a .bin file.");
+            Li("Open Dump loads a .bin from disk. Works offline, no device needed.");
+            Li("Verify reads the module again and diffs it against what is in memory.");
+            Li("Write All pushes the dump to the module. Write protection is handled for you: RSWP is cleared on DDR5 and HV is applied on DDR4.");
+            B("Edited timings by hand and the CRC went red? Open Parsed Fields, hit Recalc & Fix CRC, then Write All. Nothing touches the module until you write.");
 
-            H("④ PMIC (DDR5 only)");
-            B("PMICs at 0x48–0x4F auto-detect on connect. The PMIC tab");
-            B("shows live SWA/SWB/SWC voltages, VIN, LDO outputs, and");
-            B("currents (1 Hz refresh). Read All Registers dumps all");
-            B("256 bytes; Burn writes vendor MTP blocks (irreversible -");
-            B("prompts for confirmation). Unlock first; the JEDEC");
-            B("default password (0x73 / 0x94) is used unless you've");
-            B("saved a custom one for that PMIC type.");
-            Sep();
+            H("\u2463  PMIC work (DDR5 only)");
+            B("PMICs at 0x48 to 0x4F are picked up automatically when you connect. The PMIC tab streams live rail voltages and currents once a second, dumps the full register space, and burns vendor MTP blocks when you tell it to.");
+            B("Burning is permanent, so there is always a confirmation first. Unlock uses the standard password unless you have saved your own for that PMIC type.");
 
-            H("⑤ Advanced Settings");
-            B("Click Advanced… (only enabled while connected) for:");
-            B("  • Custom device name (saved to programmer EEPROM).");
-            B("  • I2C bus speed: 100 kHz / 400 kHz / 1 MHz.");
-            B("    DDR5 needs 1 MHz; DDR4 is reliable at 400 kHz.");
-            B("  • Auto-Connect on launch (remembers last COM port).");
-            B("  • Factory Reset clears EEPROM-stored settings.");
-            B("  • Manual Pin Control - HV converter, SA1, VIN_CTRL,");
-            B("    PMIC_CTRL, status LED, and the RFU pins.");
-            Sep();
+            H("\u2464  Advanced settings");
+            B("The Advanced button (enabled while connected) covers the rest: a custom device name stored on the programmer, the I2C bus speed, auto-connect on launch, factory reset, and manual control over every board pin.");
+            B("Rule of thumb for speed: DDR5 wants 1 MHz, DDR4 is happiest at 400 kHz. Drop a notch if a worn socket starts throwing read errors.");
 
-            H("⑥ CLI Mode");
-            B("Every operation is scriptable. Run UDFFlasher.exe with");
-            B("arguments to skip the GUI; results print to stdout, exit");
-            B("codes follow §5.3 (0=ok, 1=device, 2=I2C, 3=verify,");
-            B("4=CRC, 5=write, 6=usage). Use --auto-detect to skip");
-            B("--port. Examples:");
-            B("  UDFFlasher.exe ping --auto-detect");
-            B("  UDFFlasher.exe spd read 0x50 --port COM4 --out m.bin");
-            B("  UDFFlasher.exe spd verify 0x50 --in golden.bin");
-            Sep();
+            H("\u2465  Script it");
+            B("Everything the GUI does works from the command line too. Run the exe with arguments and there is no window at all, just results on stdout and proper exit codes (0 ok, 1 device, 2 I2C, 3 verify, 4 CRC, 5 write, 6 usage).");
+            Cmd("UDFFlasher.exe ping --auto-detect");
+            Cmd("UDFFlasher.exe spd read 0x50 --port COM4 --out m.bin");
+            Cmd("UDFFlasher.exe spd verify 0x50 --in golden.bin");
 
-            H("Troubleshooting");
-            B("• No ports listed → check USB cable and CDC driver.");
-            B("• Connect fails → unplug, replug, try a different cable.");
-            B("• SPD read errors → drop I2C speed one notch.");
-            B("• CRC FAIL on a fresh read → vendor XMP/EXPO blob may use");
-            B("  non-JEDEC CRC rules; the bytes can still be valid.");
-            B("• PMIC not detected → check the VIN_CTRL pin and 1.8 V");
-            B("  rail; some sticks need PMIC_CTRL toggled before scan.");
+            H("If something's off");
+            Li("No ports listed: check the cable (charge-only cables are sneaky) and give the driver a few seconds.");
+            Li("Connect fails: replug, try another cable or another USB port.");
+            Li("SPD reads error out: drop the I2C speed one notch and reseat the module.");
+            Li("CRC FAIL on a fresh read: XMP and EXPO vendors sometimes bend the CRC rules. If the timings look sane, the data is probably fine.");
+            Li("No PMIC found: check the VIN_CTRL pin; some sticks need PMIC_CTRL toggled before a scan.");
 
             rtb.SelectionStart = 0;
             group.Controls.Add(rtb);
@@ -413,9 +382,6 @@ namespace UnifiedDDRFlasher
         public string GetSelectedPort() => _portCombo.SelectedItem?.ToString() ?? "";
         public int GetBaudRate() => DEFAULT_BAUD_RATE;
 
-        /// <summary>
-        /// Programmatically selects a port in the dropdown (used for auto-connect).
-        /// </summary>
         public void SelectPort(string portName)
         {
             if (InvokeRequired) { Invoke(new Action(() => SelectPort(portName))); return; }
@@ -453,10 +419,14 @@ namespace UnifiedDDRFlasher
             {
                 uint version = device.GetVersion();
                 string readable = $"{version / 10000}-{(version / 100) % 100:D2}-{version % 100:D2}";
-                _firmwareLabel.Text = $"Firmware: {readable}";
+                _firmwareLabel.Text = $"Firmware:  {readable}";
 
                 string devName = device.GetDeviceName();
-                _deviceNameLabel.Text = $"Device: {(string.IsNullOrEmpty(devName) ? "(unnamed)" : devName)}";
+                _deviceNameLabel.Text = $"Device:    {(string.IsNullOrEmpty(devName) ? "(unnamed)" : devName)}";
+
+                _statusValueLabel.Text = "\u25CF  Connected";
+                _statusValueLabel.ForeColor = Color.FromArgb(30, 130, 50);
+                _portValueLabel.Text = $"Port:      {GetSelectedPort()}";
             }
             catch (Exception ex)
             {
@@ -468,8 +438,11 @@ namespace UnifiedDDRFlasher
 
         public void OnDeviceDisconnected()
         {
-            _firmwareLabel.Text = "Firmware: —";
-            _deviceNameLabel.Text = "Device: —";
+            _firmwareLabel.Text = "Firmware:  -";
+            _deviceNameLabel.Text = "Device:    -";
+            _statusValueLabel.Text = "\u25CF  Disconnected";
+            _statusValueLabel.ForeColor = Color.FromArgb(170, 40, 40);
+            _portValueLabel.Text = "Port:      -";
         }
 
         #endregion
@@ -479,7 +452,19 @@ namespace UnifiedDDRFlasher
         private void OnPortRefreshTick(object sender, EventArgs e)
         {
             if (_isConnected) return;
-            string[] current = SerialPort.GetPortNames();
+            RefreshIfPortsChanged();
+        }
+
+        public void OnDeviceChangeMessage()
+        {
+            if (IsDisposed || _isConnected) return;
+            if (InvokeRequired) { BeginInvoke(new Action(RefreshIfPortsChanged)); return; }
+            RefreshIfPortsChanged();
+        }
+
+        private void RefreshIfPortsChanged()
+        {
+            string[] current = EnumeratePortsFromRegistry();
             if (!string.Join(",", current).Equals(string.Join(",", _lastKnownPorts)))
             {
                 _lastKnownPorts = current;
@@ -487,18 +472,56 @@ namespace UnifiedDDRFlasher
             }
         }
 
+        private static string[] EnumeratePortsFromRegistry()
+        {
+            var ports = new List<string>();
+            try
+            {
+                using (var key = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DEVICEMAP\SERIALCOMM"))
+                {
+                    if (key != null)
+                    {
+                        foreach (string valueName in key.GetValueNames())
+                        {
+                            if (key.GetValue(valueName) is string portName &&
+                                !string.IsNullOrWhiteSpace(portName))
+                            {
+                                ports.Add(portName);
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                try { ports.AddRange(SerialPort.GetPortNames()); } catch { }
+            }
+            ports.Sort((a, b) =>
+            {
+                int an = ParseComNumber(a), bn = ParseComNumber(b);
+                if (an >= 0 && bn >= 0) return an.CompareTo(bn);
+                return string.CompareOrdinal(a, b);
+            });
+            return ports.ToArray();
+        }
+
+        private static int ParseComNumber(string portName)
+        {
+            if (string.IsNullOrEmpty(portName) || !portName.StartsWith("COM", StringComparison.OrdinalIgnoreCase))
+                return -1;
+            return int.TryParse(portName.Substring(3), out int n) ? n : -1;
+        }
+
         private void LoadPorts()
         {
             if (InvokeRequired) { Invoke(new Action(LoadPorts)); return; }
 
-            // §6.4: never repopulate the combobox while the user has it open -
-            // doing so closes the dropdown mid-click and confuses the selection.
             if (_portCombo.DroppedDown) return;
 
             string current = _portCombo.SelectedItem?.ToString();
             _portCombo.Items.Clear();
 
-            string[] ports = SerialPort.GetPortNames();
+            string[] ports = EnumeratePortsFromRegistry();
             if (ports.Length > 0)
             {
                 _portCombo.Items.AddRange(ports);
@@ -520,10 +543,9 @@ namespace UnifiedDDRFlasher
                 DisconnectionRequested, ConnectionRequested, this);
             dlg.ShowDialog(this);
 
-            // Refresh name after dialog (user may have changed it)
             if (Device != null)
             {
-                try { _deviceNameLabel.Text = $"Device: {Device.GetDeviceName()}"; }
+                try { _deviceNameLabel.Text = $"Device:    {Device.GetDeviceName()}"; }
                 catch { }
             }
         }
@@ -531,15 +553,7 @@ namespace UnifiedDDRFlasher
         #endregion
     }
 
-    // ═════════════════════════════════════════════════════════════════════════
-    // Advanced Configuration Dialog – v3.1
-    // Contains: Device Name, Factory Reset, Auto-Connect, I2C Speed, Pin Control
-    // ═════════════════════════════════════════════════════════════════════════
 
-    /// <summary>
-    /// Advanced programmer options:
-    /// – Set Device Name  – Factory Reset  – Auto-Connect checkbox  – I2C Speed  – Manual Pin Control
-    /// </summary>
     internal sealed class AdvancedConfigDialog : Form
     {
         private readonly UDFDevice _device;
@@ -552,7 +566,6 @@ namespace UnifiedDDRFlasher
         private ComboBox _i2cSpeedCombo;
         private CheckBox _autoConnectCheck;
 
-        // Pin readout labels (updated by timer)
         private Label[] _pinStateLabels;
         private System.Windows.Forms.Timer _pinRefreshTimer;
         private const int AUTO_CONNECT_DELAY_MS = 500;
@@ -587,11 +600,12 @@ namespace UnifiedDDRFlasher
             _parent = parent;
 
             Text = "Advanced Configuration";
-            FormBorderStyle = FormBorderStyle.FixedDialog;
+            FormBorderStyle = FormBorderStyle.Sizable;
             MaximizeBox = false;
             MinimizeBox = false;
             StartPosition = FormStartPosition.CenterParent;
-            Size = new Size(580, 680);
+            Size = new Size(600, 740);
+            MinimumSize = new Size(560, 640);
             BackColor = Color.FromArgb(240, 240, 240);
 
             BuildUI();
@@ -612,23 +626,24 @@ namespace UnifiedDDRFlasher
                 ColumnCount = 1,
                 Padding = new Padding(14)
             };
-            main.RowStyles.Add(new RowStyle(SizeType.Absolute, 80F));   // Device Name
-            main.RowStyles.Add(new RowStyle(SizeType.Absolute, 90F));   // Programmer Options + Auto-Connect
-            main.RowStyles.Add(new RowStyle(SizeType.Absolute, 80F));   // I2C Speed
-            main.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));   // Pin Control
-            main.RowStyles.Add(new RowStyle(SizeType.Absolute, 44F));   // Close
+            main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            main.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            main.RowStyles.Add(new RowStyle(SizeType.Absolute, 44F));
 
-            // ── Device Name ──────────────────────────────────────────────────
             GroupBox nameGroup = new GroupBox
             {
                 Text = "Device Name",
                 Dock = DockStyle.Fill,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 Font = new Font("Segoe UI", 9F, FontStyle.Bold),
                 Padding = new Padding(8),
                 ForeColor = Color.FromArgb(0, 78, 152)
             };
 
-            var nameFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+            var nameFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false };
             _nameText = new TextBox
             {
                 Width = 200,
@@ -652,11 +667,12 @@ namespace UnifiedDDRFlasher
             nameGroup.Controls.Add(nameFlow);
             main.Controls.Add(nameGroup, 0, 0);
 
-            // ── Programmer Options (Factory Reset + Auto-Connect) ────────────
             GroupBox miscGroup = new GroupBox
             {
                 Text = "Programmer Options",
                 Dock = DockStyle.Fill,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 Font = new Font("Segoe UI", 9F, FontStyle.Bold),
                 Padding = new Padding(8),
                 ForeColor = Color.FromArgb(0, 78, 152)
@@ -665,13 +681,14 @@ namespace UnifiedDDRFlasher
             var miscLayout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
+                AutoSize = true,
                 RowCount = 2,
                 Padding = new Padding(2)
             };
-            miscLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
-            miscLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            miscLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            miscLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-            var miscFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+            var miscFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false };
 
             var factoryBtn = new Button
             {
@@ -691,7 +708,6 @@ namespace UnifiedDDRFlasher
             miscFlow.Controls.Add(factoryBtn);
             miscLayout.Controls.Add(miscFlow, 0, 0);
 
-            // Auto-connect checkbox (backed by AppSettings JSON file)
             _autoConnectCheck = new CheckBox
             {
                 Text = "Auto-Connect to last used port on startup",
@@ -710,17 +726,18 @@ namespace UnifiedDDRFlasher
             miscGroup.Controls.Add(miscLayout);
             main.Controls.Add(miscGroup, 0, 1);
 
-            // ── I2C Speed ────────────────────────────────────────────────────
             GroupBox i2cGroup = new GroupBox
             {
                 Text = "I2C Bus Speed",
                 Dock = DockStyle.Fill,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 Font = new Font("Segoe UI", 9F, FontStyle.Bold),
                 Padding = new Padding(8),
                 ForeColor = Color.FromArgb(0, 78, 152)
             };
 
-            var i2cFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+            var i2cFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false };
 
             _i2cSpeedCombo = new ComboBox
             {
@@ -731,7 +748,6 @@ namespace UnifiedDDRFlasher
             };
             _i2cSpeedCombo.Items.AddRange(I2CSpeedLabels);
 
-            // Pre-select current device speed if connected
             if (_device != null)
             {
                 try
@@ -762,7 +778,6 @@ namespace UnifiedDDRFlasher
             i2cGroup.Controls.Add(i2cFlow);
             main.Controls.Add(i2cGroup, 0, 2);
 
-            // ── Manual Pin Control ────────────────────────────────────────────
             GroupBox pinGroup = new GroupBox
             {
                 Text = "Manual Pin Control  (live readout)",
@@ -775,7 +790,7 @@ namespace UnifiedDDRFlasher
             var pinTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                RowCount = PinDefs.Length,
+                RowCount = PinDefs.Length + 1,
                 ColumnCount = 4,
                 AutoScroll = true
             };
@@ -783,6 +798,9 @@ namespace UnifiedDDRFlasher
             pinTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 54F));
             pinTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72F));
             pinTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            for (int i = 0; i < PinDefs.Length; i++)
+                pinTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+            pinTable.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
             _pinStateLabels = new Label[PinDefs.Length];
 
@@ -806,7 +824,7 @@ namespace UnifiedDDRFlasher
 
                 _pinStateLabels[i] = new Label
                 {
-                    Text = _device != null ? ReadPin(pinId) : "—",
+                    Text = _device != null ? ReadPin(pinId) : "-",
                     Dock = DockStyle.Fill,
                     Font = new Font("Consolas", 8.5F, FontStyle.Bold),
                     TextAlign = ContentAlignment.MiddleCenter,
@@ -869,7 +887,6 @@ namespace UnifiedDDRFlasher
             pinGroup.Controls.Add(pinPanelWrapper);
             main.Controls.Add(pinGroup, 0, 3);
 
-            // ── Close ─────────────────────────────────────────────────────────
             var closeFlow = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -900,7 +917,7 @@ namespace UnifiedDDRFlasher
         private string ReadPin(byte pin)
         {
             try { return _device.GetPin(pin) == 1 ? "HIGH" : "LOW"; }
-            catch { return "—"; }
+            catch { return "-"; }
         }
 
         private void RefreshPinStates()
@@ -918,7 +935,7 @@ namespace UnifiedDDRFlasher
                 }
                 catch
                 {
-                    _pinStateLabels[i].Text = "—";
+                    _pinStateLabels[i].Text = "-";
                     _pinStateLabels[i].ForeColor = Color.Gray;
                 }
             }
