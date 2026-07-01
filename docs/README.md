@@ -7,7 +7,7 @@
 
 <!-- ─────────────────────────────────────────────────────────────── -->
 
-![The Unified DDR Flasher](docs/img/device.jpg)
+![The Unified DDR Flasher](img/device.jpg)
 
 <!-- ─────────────────────────────────────────────────────────────── -->
 
@@ -80,7 +80,7 @@ extension board that takes UDIMM-form-factor modules:
 
 <!-- ─────────────────────────────────────────────────────────────── -->
 
-![UDF extension board with the main programmer](docs/img/dev_full.jpg)
+![UDF extension board with the main programmer](img/dev_full.jpg)
 
 <!-- ─────────────────────────────────────────────────────────────── -->
 
@@ -128,7 +128,7 @@ the queue.
 
 <!-- ─────────────────────────────────────────────────────────────── -->
 
-![The Unified DDR Flasher GUI](docs/img/app_spd.png)
+![The Unified DDR Flasher GUI](img/app_spd.png)
 
 <!-- ─────────────────────────────────────────────────────────────── -->
 
